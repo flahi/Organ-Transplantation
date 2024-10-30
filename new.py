@@ -744,4 +744,4 @@ Zh, S1, S2, S3, I1, I2, I3 = permutationPolynomial(roots, sigma1, sigma2, sigma3
 proof = prove(n, roots, a, b, c, Zh, QL, QR, QM, QC, QO, PI, S1, S2, S3, I1, I2, I3, k1, k2)
 print("\n\n\n\n")
 checkProof = load_proof("proof.json")
-verify(proof)
+verify(checkProof)

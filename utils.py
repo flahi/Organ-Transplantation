@@ -189,15 +189,15 @@ def load_proof(path):
     
     for k, v in proof.items():
         if isinstance(v, list):
-            # Convert each item in the list back to Galois Field only if key is in gf_keys
+            # Convert each item in the list back to Galois Field or other types as needed
             proof[k] = [
-                galois.GF(241)(item) if isinstance(item, int) and k in gf_keys else item
+                galois.GF(241)(int(item)) if k in gf_keys and isinstance(item, (int, str)) else item
                 for item in v
             ]
         else:
-            # Convert back if the value was an int and should be GF(241)
-            if isinstance(v, int) and k in gf_keys:
-                proof[k] = galois.GF(241)(v)
+            # Convert back if the value was an int or str and should be GF(241)
+            if isinstance(v, (int, str)) and k in gf_keys:
+                proof[k] = galois.GF(241)(int(v))  # Convert str to int, then to GF element
     
     return proof
 
