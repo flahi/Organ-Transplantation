@@ -185,7 +185,7 @@ def load_proof(path):
         proof = json.load(f)
     
     # List of proof keys that should be converted to GF(241)
-    gf_keys = ["A", "B", "C", "Z", "Tl", "Tm", "Th", "Wzeta", "Womega_zeta", "a_zeta", "b_zeta", "c_zeta", "s1_zeta", "s2_zeta", "z_omega_zeta", "round1", "round2", "round3", "round4", "round5"]
+    gf_keys = ["round1", "round2", "round3", "round4", "round5"]
     
     for k, v in proof.items():
         if isinstance(v, list):
