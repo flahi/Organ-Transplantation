@@ -597,7 +597,6 @@ u = numbers_to_hash(round1 + round2 + round3 + round4 + round5, Fp)
 Zh_z = Zh(zeta)
 L1_z = L1(zeta)
 PI_z = PI(zeta)
-
 r0 = (
     PI_z
     - L1_z * alpha**2
@@ -681,4 +680,5 @@ else:
     print(f"e1 = {e1 * tau} = {e1} * tau")
     print(f"e2 = {e2}")
     assert e1 * tau == e2
+
 

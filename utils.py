@@ -3,6 +3,7 @@ Utilities for the Plonk protocol.
 """
 import json
 from Crypto.Hash import keccak
+import galois
 from py_ecc.optimized_bn128 import (
     add,
     multiply,
@@ -32,6 +33,7 @@ __all__ = [
     "dump_circuit",
 ]
 
+GF241 = galois.GF(241)
 
 class GPoint(tuple):
 
@@ -159,14 +161,45 @@ def patch_galois(Poly):
 def dump_proof(proof, path):
     """Dump proof to file."""
     for k, v in proof.items():
-        if isinstance(v, GPoint) or isinstance(v, GPoint):
+        if isinstance(v, GPoint):  # Assuming GPoint is defined somewhere in your code
             proof[k] = str(v)
+        elif isinstance(v, list):
+            # Convert each item in the list, keeping GF(241) elements as is
+            proof[k] = [
+                str(item) if isinstance(item, GPoint) else item for item in v
+            ]
         else:
-            proof[k] = int(v)
+            # Check for GF(241) type
+            if isinstance(v, GF241):  # Check against the specific Galois Field instance
+                proof[k] = v  # Keep it as is
+            else:
+                proof[k] = int(v)  # Convert other types to int
 
+    # Saving the proof dictionary to a JSON file
     with open(path, "w") as f:
-        json.dump(proof, f, indent=2)
+        json.dump(proof, f, indent=2, default=str)  # Use default=str to handle GF elements
 
+def load_proof(path):
+    """Load proof from file."""
+    with open(path, "r") as f:
+        proof = json.load(f)
+    
+    # List of proof keys that should be converted to GF(241)
+    gf_keys = ["A", "B", "C", "Z", "Tl", "Tm", "Th", "Wzeta", "Womega_zeta", "a_zeta", "b_zeta", "c_zeta", "s1_zeta", "s2_zeta", "z_omega_zeta", "round1", "round2", "round3", "round4", "round5"]
+    
+    for k, v in proof.items():
+        if isinstance(v, list):
+            # Convert each item in the list back to Galois Field only if key is in gf_keys
+            proof[k] = [
+                galois.GF(241)(item) if isinstance(item, int) and k in gf_keys else item
+                for item in v
+            ]
+        else:
+            # Convert back if the value was an int and should be GF(241)
+            if isinstance(v, int) and k in gf_keys:
+                proof[k] = galois.GF(241)(v)
+    
+    return proof
 
 def dump_circuit(circuit, path):
     """Dump circuit to file."""
