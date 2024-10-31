@@ -1,7 +1,8 @@
 import galois
 import numpy as np
 import json
-from utils import (generator1, generator2, curve_order, normalize, validate_point, GPoint, SRS, numbers_to_hash, patch_galois, dump_proof, load_proof, dump_circuit)
+from datetime import datetime
+from utils import (generator1, generator2, curve_order, normalize, validate_point, GPoint, SRS, numbers_to_hash, patch_galois, dump_proof, load_proof, dump_circuit, load_circuit)
 
 
 #ledger simulation
@@ -17,12 +18,25 @@ class Node:
 	def __init__(self, node_id, crs):
 		self.node_id = node_id
 		self.crs = crs
+	def create_transaction(self, tx_id, tx_type, details):
+		n, omega, roots = setup1(2, 3)
+		a, b, c, pi, ql, qr, qm, qc, qo = witnessGatesMain(n)
+		sigmaFor1 = sigmaFinder(n)
+		c1_roots, c2_roots, c3_roots, sigma1, sigma2, sigma3, k1, k2 = permutations(n, roots, sigmaFor1, a, b, c)
+		QL, QR, QM, QC, QO, PI = gatePolynomials(roots, ql, qr, qm, qc, qo, pi)
+		Zh, S1, S2, S3, I1, I2, I3 = permutationPolynomial(roots, sigma1, sigma2, sigma3, k1, k2, c1_roots, c2_roots, c3_roots)
+		
+		# Generate the proof
+		proof = prove(n, roots, a, b, c, Zh, QL, QR, QM, QC, QO, PI, S1, S2, S3, I1, I2, I3, k1, k2, omega)
+		# Add transaction with proof to ledger
+		add_transactions(tx_id, tx_type, details, proof)
+		print(f"Node {self.node_id} created and broadcasted transaction {tx_id}")
 	def verify_transaction(self, transaction):
 		proof = transaction['proof']
-		return verify_proof(proof, self.crs)
+		return verify(proof)
 
 def create_nodes(num_node, crs):
-	return [Node(node_id = i, crs = crs) for i in range(num_nodes)]
+	return [Node(node_id = i, crs = crs) for i in range(num_node)]
 
 
 #setup
@@ -231,7 +245,7 @@ def to_vanishing_poly(roots, field):
     # Z^n - 1 = (Z - 1)(Z - w)(Z - w^2)...(Z - w^(n-1))
     return galois.Poly.Degrees([len(roots), 0], coeffs=[1, -1], field=field)
 
-def permutationPolynomial(roots, sigma1, sigma2, sigma3, k1, k2):
+def permutationPolynomial(roots, sigma1, sigma2, sigma3, k1, k2, c1_roots, c2_roots, c3_roots):
 	S1 = to_poly(roots, sigma1, Fp)
 	S2 = to_poly(roots, sigma2, Fp)
 	S3 = to_poly(roots, sigma3, Fp)
@@ -285,7 +299,7 @@ def shift_poly(poly: galois.Poly, omega: Fp):
     coeffs = [c * omega**i for i, c in enumerate(coeffs)]
     return galois.Poly(coeffs[::-1], field=poly.field)
 
-def prove(n, roots, a, b, c, Zh, QL, QR, QM, QC, QO, PI, S1, S2, S3, I1, I2, I3, k1, k2):
+def prove(n, roots, a, b, c, Zh, QL, QR, QM, QC, QO, PI, S1, S2, S3, I1, I2, I3, k1, k2, omega):
 	pi = evaluate_poly(PI, roots)
 	#round1
 	random_b = [Fp.Random() for i in range(0, 9)]
@@ -510,7 +524,9 @@ def prove(n, roots, a, b, c, Zh, QL, QR, QM, QC, QO, PI, S1, S2, S3, I1, I2, I3,
 		"round5": round5
 	}
 	dump_proof(proof, "proof.json")
+	
 	circuit = {
+	"add_patient": {
 		"QM": QM.coeffs,
 		"QL": QL.coeffs,
 		"QR": QR.coeffs,
@@ -529,6 +545,7 @@ def prove(n, roots, a, b, c, Zh, QL, QR, QM, QC, QO, PI, S1, S2, S3, I1, I2, I3,
 		"omega": omega,
 		"n": n,
 		"encrypted": encrypted,
+		}
 	}
 
 	dump_circuit(circuit, "circuit.json")
@@ -541,6 +558,18 @@ def prove(n, roots, a, b, c, Zh, QL, QR, QM, QC, QO, PI, S1, S2, S3, I1, I2, I3,
 #verifier
 def verify(proof):
 	# These evaluations are calculated beforehand during the setup phase
+	circuits = load_circuit("circuit.json")
+	circuit_config = circuits["add_patient"]
+	
+	QM = galois.Poly(circuit_config["QM"], field=Fp)
+	QL = galois.Poly(circuit_config["QL"], field=Fp)
+	QR = galois.Poly(circuit_config["QR"], field=Fp)
+	QO = galois.Poly(circuit_config["QO"], field=Fp)
+	QC = galois.Poly(circuit_config["QC"], field=Fp)
+	S1 = galois.Poly(circuit_config["S1"], field=Fp)
+	S2 = galois.Poly(circuit_config["S2"], field=Fp)
+	S3 = galois.Poly(circuit_config["S3"], field=Fp)
+	
 	qm_exp = QM(tau)
 	ql_exp = QL(tau)
 	qr_exp = QR(tau)
@@ -550,30 +579,18 @@ def verify(proof):
 	s2_exp = S2(tau)
 	s3_exp = S3(tau)
 	
-	k1 = 2
-	k2 = 4
+	k1 = circuit_config["k1"]
+	k2 = circuit_config["k2"]
 	
-	n = proof.get("n")
+	n = circuit_config["n"]
 	
-	omega = Fp.primitive_root_of_unity(n)
-	assert omega ** (n) == 1, f"omega (ω) {omega} is not a root of unity"
-
+	omega = circuit_config["omega"]
+	
 	roots = Fp([omega**i for i in range(n)])
 	print(f"roots = {roots}")
 	
-	Zh = to_vanishing_poly(roots, Fp)
-	for x in roots:
-		assert Zh(x) == 0
-
-	print("--- Vanishing Polynomial ---")
-	print(f"Zh = {Zh}")
-	
-	L1 = galois.lagrange_poly(roots, Fp([1] + [Fp(0)] * (n - 1)))
-	print("\n\n--- L1 Polynomial ---")
-	print(f"L1(x) = {L1}")
-	for i, r in enumerate(roots):
-		print(f"L1({r}) = {L1(r)}")
-		assert L1(r) == (Fp(1) if i == 0 else Fp(0))
+	L1 = galois.Poly(circuit_config["L1"], field=Fp)
+	Zh = galois.Poly(circuit_config["Zh"], field=Fp)
 	
 	round1 = proof.get("round1")
 	round2 = proof.get("round2")
@@ -709,18 +726,18 @@ def verify(proof):
 		print(f"pairing1 = {pairing1}")
 		print(f"pairing2 = {pairing2}")
 
-		assert pairing1 == pairing2, f"pairing1 != pairing2"
+		return (pairing1 == pairing2)
 	else:
 		print("\n\n--- e1, e2 ---")
 		print(f"e1 = {e1 * tau} = {e1} * tau")
 		print(f"e2 = {e2}")
-		assert e1 * tau == e2
+		return (e1 * tau == e2)
 
 
 
 
 #working
-n, omega, roots = setup1(2, 3)
+'''n, omega, roots = setup1(2, 3)
 a, b, c, pi, ql, qr, qm, qc, qo = witnessGatesMain(n)
 sigmaFor1 = sigmaFinder(n)
 c1_roots, c2_roots, c3_roots, sigma1, sigma2, sigma3, k1, k2 = permutations(n, roots, sigmaFor1, a, b, c)
@@ -729,4 +746,14 @@ Zh, S1, S2, S3, I1, I2, I3 = permutationPolynomial(roots, sigma1, sigma2, sigma3
 proof = prove(n, roots, a, b, c, Zh, QL, QR, QM, QC, QO, PI, S1, S2, S3, I1, I2, I3, k1, k2)
 print("\n\n\n\n")
 checkProof = load_proof("proof.json")
-verify(checkProof)
+verify(checkProof)'''
+
+nodes = create_nodes(5, tau)
+nodes[0].create_transaction("TX1001", "add_patient", {"patient_id":123})
+
+for node in nodes[1:]:
+	transaction = ledger[-1]
+	if node.verify_transaction(transaction):
+		print(f"Node {node.node_id} verified the transaction {transaction['tx_id']} successfully.")
+	else:
+		print(f"Node {node.node_id} failed to verify the transaction {transaction['tx_id']}.")

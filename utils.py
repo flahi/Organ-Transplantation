@@ -202,14 +202,39 @@ def load_proof(path):
     return proof
 
 def dump_circuit(circuit, path):
-    """Dump circuit to file."""
-    for k, v in circuit.items():
-        if k in ["tau", "k1", "k2", "Fp", "omega", "n"]:
-            circuit[k] = int(v)
-        elif isinstance(v, bool):
-            continue
-        else:
-            circuit[k] = [int(x) for x in v]
-
+    """Dump nested circuit to file, converting Galois field arrays and polynomials to integer lists."""
+    for function_name, circuit_data in circuit.items():
+        for k, v in circuit_data.items():
+            if k in ["tau", "k1", "k2", "Fp", "omega", "n"]:
+                circuit_data[k] = int(v)  # convert these specific keys to integers
+            elif isinstance(v, bool):
+                continue  # leave booleans as they are
+            elif isinstance(v, galois.FieldArray):
+                circuit_data[k] = v.tolist()  # store FieldArray as a list of integers
+            elif isinstance(v, galois.Poly):
+                circuit_data[k] = v.coeffs.tolist()  # store Poly coefficients as a list of integers
+            elif isinstance(v, list):
+                circuit_data[k] = [int(x) for x in v]  # convert lists of coefficients to integers
     with open(path, "w") as f:
         json.dump(circuit, f, indent=2)
+
+def load_circuit(path):
+    """Load circuit configuration from file, with lists of integers for polynomial coefficients."""
+    with open(path, "r") as f:
+        circuit = json.load(f)
+
+    for function_name, circuit_data in circuit.items():
+        # Initialize the Galois field based on the stored 'Fp' field value
+        Fp = galois.GF(circuit_data["Fp"]) if "Fp" in circuit_data else None
+
+        for k, v in circuit_data.items():
+            if k in ["tau", "k1", "k2", "Fp", "n"]:
+                circuit_data[k] = int(v)  # Restore integers directly
+            elif k == "omega":
+            	circuit_data[k] = Fp(int(v))
+            elif isinstance(v, list):
+                circuit_data[k] = v  # Keep lists as they are
+            else:
+                circuit_data[k] = v  # Leave other types unchanged
+
+    return circuit

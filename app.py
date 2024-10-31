@@ -542,6 +542,7 @@ dump_circuit(circuit, "circuit.json")
 
 #verifier
 # These evaluations are calculated beforehand during the setup phase
+
 qm_exp = QM(tau)
 ql_exp = QL(tau)
 qr_exp = QR(tau)
