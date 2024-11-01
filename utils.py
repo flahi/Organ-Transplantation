@@ -178,12 +178,9 @@ def dump_proof(proof, path):
     # Saving the proof dictionary to a JSON file
     with open(path, "w") as f:
         json.dump(proof, f, indent=2, default=str)  # Use default=str to handle GF elements
+    return proof
 
-def load_proof(path):
-    """Load proof from file."""
-    with open(path, "r") as f:
-        proof = json.load(f)
-    
+def load_proof(proof):
     # List of proof keys that should be converted to GF(241)
     gf_keys = ["round1", "round2", "round3", "round4", "round5"]
     

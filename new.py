@@ -1,23 +1,54 @@
+import socket
+import threading
 import galois
 import numpy as np
 import json
+import time
+import copy
 from datetime import datetime
 from utils import (generator1, generator2, curve_order, normalize, validate_point, GPoint, SRS, numbers_to_hash, patch_galois, dump_proof, load_proof, dump_circuit, load_circuit)
 
 
-#ledger simulation
-ledger = []
-
-def add_transactions(tx_id, tx_type, details, proof):
-	block = { "tx_id":tx_id, "tx_type":tx_type, "details":details, "proof":proof, "timestamp": datetime.utcnow().isoformat() }
-	ledger.append(block)
-
-
 #node simulation
 class Node:
-	def __init__(self, node_id, crs):
+	def __init__(self, node_id, crs, port, other_ports):
 		self.node_id = node_id
 		self.crs = crs
+		self.port = port
+		self.other_ports = other_ports
+		self.ledger = []
+		threading.Thread(target=self.listen_for_transactions, daemon=True).start()
+	def listen_for_transactions(self):
+		server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		server_socket.bind(('localhost', self.port))
+		server_socket.listen()
+		print(f"Node {self.node_id} listening on port {self.port}")
+		
+		while True:
+			client_socket, _ = server_socket.accept()
+			threading.Thread(target=self.handle_transaction, args=(client_socket,), daemon=True).start()
+	def handle_transaction(self, client_socket):
+		transaction_data = client_socket.recv(4096).decode()
+		transaction = json.loads(transaction_data)
+		client_socket.close()
+		
+		deserialized_transaction = json_deserialize(transaction)
+		
+		if self.verify_transaction(deserialized_transaction):
+			print(f"Node {self.node_id} verified transaction {transaction['tx_id']} successfully.")
+			self.ledger.append(transaction)
+		else:
+			print(f"Node {self.node_id} failed to verify transaction {transaction['tx_id']}.")
+	def broadcast_transaction(self, transaction):
+		transaction_data = json.dumps(transaction).encode()
+		
+		for port in self.other_ports:
+			with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+				try:
+					s.connect(('localhost', port))
+					s.sendall(transaction_data)
+				except ConnectionRefusedError:
+					print(f"Node {self.node_id} could not connect to Node on port {port}")
 	def create_transaction(self, tx_id, tx_type, details):
 		n, omega, roots = setup1(2, 3)
 		a, b, c, pi, ql, qr, qm, qc, qo = witnessGatesMain(n)
@@ -29,15 +60,81 @@ class Node:
 		# Generate the proof
 		proof = prove(n, roots, a, b, c, Zh, QL, QR, QM, QC, QO, PI, S1, S2, S3, I1, I2, I3, k1, k2, omega)
 		# Add transaction with proof to ledger
-		add_transactions(tx_id, tx_type, details, proof)
-		print(f"Node {self.node_id} created and broadcasted transaction {tx_id}")
+		transaction = {
+			"tx_id": tx_id,
+			"tx_type": tx_type,
+			"details": details,
+			"proof": proof,
+			"timestamp": datetime.utcnow().isoformat()
+		}
+		serialized_transaction = json_serialize(copy.deepcopy(transaction))
+		self.ledger.append(serialized_transaction)
+		print(f"Node {self.node_id} created transaction {tx_id} and broadcasting...")
+		self.broadcast_transaction(serialized_transaction)
 	def verify_transaction(self, transaction):
 		proof = transaction['proof']
 		return verify(proof)
 
-def create_nodes(num_node, crs):
-	return [Node(node_id = i, crs = crs) for i in range(num_node)]
+def create_nodes(num_nodes, crs, base_port=5000):
+	nodes = []
+	ports = [base_port + i for i in range(num_nodes)]
+	for i in range(num_nodes):
+		other_ports = ports[:i] + ports[i+1:]
+		node = Node(node_id=i, crs=crs, port=ports[i], other_ports=other_ports)
+		nodes.append(node)
+	return nodes
 
+def json_serialize(transaction):
+    """Convert a transaction to a JSON-serializable format with Galois Field elements as integers."""
+    serialized_transaction = {}
+
+    for key, value in transaction.items():
+        if key == "proof" and isinstance(value, dict):
+            # Process the "proof" dictionary
+            serialized_proof = {}
+            for sub_key, sub_value in value.items():
+                if isinstance(sub_value, list):
+                    # Convert each Galois field element in the list to integer
+                    serialized_proof[sub_key] = [
+                        int(item) if isinstance(item, galois.FieldArray) else item
+                        for item in sub_value
+                    ]
+                else:
+                    # Keep other proof elements as they are
+                    serialized_proof[sub_key] = sub_value
+            serialized_transaction[key] = serialized_proof
+        else:
+            # Directly add other fields (non-proof) to the serialized transaction
+            serialized_transaction[key] = value
+
+    return serialized_transaction
+
+def json_deserialize(serialized_transaction):
+    """Convert serialized transaction integers back to Galois Field elements where applicable."""
+    Fp = galois.GF(241)  # Define the Galois Field for order 241
+    
+    deserialized_transaction = {}
+    
+    for key, value in serialized_transaction.items():
+        if key == "proof" and isinstance(value, dict):
+            # Process the "proof" dictionary
+            deserialized_proof = {}
+            for sub_key, sub_value in value.items():
+                if sub_key == "pi":
+                    # Keep 'pi' as a list of integers
+                    deserialized_proof[sub_key] = [int(item) for item in sub_value]
+                elif sub_key in ["round1", "round2", "round3", "round4", "round5"]:
+                    # Convert each integer in the list back to a Galois Field element for specified rounds
+                    deserialized_proof[sub_key] = [Fp(item) for item in sub_value]
+                else:
+                    # Keep other proof elements as they are
+                    deserialized_proof[sub_key] = sub_value
+            deserialized_transaction[key] = deserialized_proof
+        else:
+            # Directly add other fields (non-proof) to the deserialized transaction
+            deserialized_transaction[key] = value
+            
+    return deserialized_transaction
 
 #setup
 G1 = generator1()
@@ -67,7 +164,6 @@ def setup1(x, y):
 	roots = Fp([omega**i for i in range(n)])
 	print(f"roots = {roots}")
 	return n, omega, roots
-
 
 #witness and gates
 def pad_array(a, n):
@@ -523,7 +619,7 @@ def prove(n, roots, a, b, c, Zh, QL, QR, QM, QC, QO, PI, S1, S2, S3, I1, I2, I3,
 		"round4": round4,
 		"round5": round5
 	}
-	dump_proof(proof, "proof.json")
+	pr = dump_proof(proof, "proof.json")
 	
 	circuit = {
 	"add_patient": {
@@ -587,7 +683,6 @@ def verify(proof):
 	omega = circuit_config["omega"]
 	
 	roots = Fp([omega**i for i in range(n)])
-	print(f"roots = {roots}")
 	
 	L1 = galois.Poly(circuit_config["L1"], field=Fp)
 	Zh = galois.Poly(circuit_config["Zh"], field=Fp)
@@ -695,8 +790,6 @@ def verify(proof):
 		+ s2_exp * v**5
 	)
 
-	print(f"F_exp = {F_exp}")
-
 	E_exp = (
 		-r0
 		+ v * a_zeta
@@ -710,7 +803,6 @@ def verify(proof):
 	if encrypted:
 		E_exp = G1 * E_exp
 
-	print(f"E_exp = {E_exp}")
 	e1 = w_zeta_exp + w_omega_zeta_exp * u
 	e2 = (
 		w_zeta_exp * zeta
@@ -745,15 +837,22 @@ QL, QR, QM, QC, QO, PI = gatePolynomials(roots, ql, qr, qm, qc, qo, pi)
 Zh, S1, S2, S3, I1, I2, I3 = permutationPolynomial(roots, sigma1, sigma2, sigma3, k1, k2)
 proof = prove(n, roots, a, b, c, Zh, QL, QR, QM, QC, QO, PI, S1, S2, S3, I1, I2, I3, k1, k2)
 print("\n\n\n\n")
-checkProof = load_proof("proof.json")
+with open("proof.json", "r") as f:
+	pr = json.load(f)
+checkProof = load_proof(pr)
 verify(checkProof)'''
 
-nodes = create_nodes(5, tau)
-nodes[0].create_transaction("TX1001", "add_patient", {"patient_id":123})
+nodes = create_nodes(10, tau)
+nodes[0].create_transaction("TX1001", "add_patient", {"patient_id": 123})
 
-for node in nodes[1:]:
+time.sleep(2)
+
+print(nodes[0].ledger)
+print(nodes[1].ledger)
+
+'''for node in nodes[1:]:
 	transaction = ledger[-1]
 	if node.verify_transaction(transaction):
 		print(f"Node {node.node_id} verified the transaction {transaction['tx_id']} successfully.")
 	else:
-		print(f"Node {node.node_id} failed to verify the transaction {transaction['tx_id']}.")
+		print(f"Node {node.node_id} failed to verify the transaction {transaction['tx_id']}.")'''
