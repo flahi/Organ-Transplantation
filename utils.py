@@ -4,6 +4,7 @@ Utilities for the Plonk protocol.
 import json
 from Crypto.Hash import keccak
 import galois
+import hashlib
 from py_ecc.optimized_bn128 import (
     add,
     multiply,
@@ -130,7 +131,7 @@ class SRS:
 
 
 def numbers_to_hash(numbers, field) -> int:
-    """Hash a number."""
+    """Hash a number using Random Oracle with explicit handling of Galois field elements."""
     engine = keccak.new(digest_bits=256)
     for number in numbers:
         if isinstance(number, tuple):
@@ -139,7 +140,11 @@ def numbers_to_hash(numbers, field) -> int:
             engine.update(bytes(hex(int(y)), "utf-8"))
             engine.update(bytes(hex(int(z)), "utf-8"))
         else:
-            engine.update(bytes(hex(int(number)), "utf-8"))
+            # Convert Galois Field elements to int if necessary
+            value = int(number) if isinstance(number, galois.FieldArray) else number
+            engine.update(bytes(hex(value), "utf-8"))
+    
+    # Generate the challenge in the specified field
     return field(int(engine.hexdigest(), 16) % field.order)
 
 

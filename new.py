@@ -68,9 +68,9 @@ class Node:
 			"timestamp": datetime.utcnow().isoformat()
 		}
 		serialized_transaction = json_serialize(copy.deepcopy(transaction))
-		self.ledger.append(serialized_transaction)
 		print(f"Node {self.node_id} created transaction {tx_id} and broadcasting...")
 		self.broadcast_transaction(serialized_transaction)
+		self.ledger.append(serialized_transaction)
 	def verify_transaction(self, transaction):
 		proof = transaction['proof']
 		return verify(proof)
@@ -619,6 +619,7 @@ def prove(n, roots, a, b, c, Zh, QL, QR, QM, QC, QO, PI, S1, S2, S3, I1, I2, I3,
 		"round4": round4,
 		"round5": round5
 	}
+	#proof["round1"][0] = Fp.Random()
 	pr = dump_proof(proof, "proof.json")
 	
 	circuit = {
@@ -842,13 +843,13 @@ with open("proof.json", "r") as f:
 checkProof = load_proof(pr)
 verify(checkProof)'''
 
-nodes = create_nodes(10, tau)
+nodes = create_nodes(3, tau)
 nodes[0].create_transaction("TX1001", "add_patient", {"patient_id": 123})
 
 time.sleep(2)
 
-print(nodes[0].ledger)
-print(nodes[1].ledger)
+print("Prover ledger: ",nodes[0].ledger)
+print("Verifier ledger: ",nodes[1].ledger)
 
 '''for node in nodes[1:]:
 	transaction = ledger[-1]
