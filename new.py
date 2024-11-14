@@ -6,6 +6,7 @@ import json
 import time
 import copy
 from datetime import datetime
+import hashlib
 from utils import (generator1, generator2, curve_order, normalize, validate_point, GPoint, SRS, numbers_to_hash, generate_challenge, patch_galois, dump_proof, load_proof, dump_circuit, load_circuit)
 
 
@@ -51,9 +52,14 @@ class Node:
 				except ConnectionRefusedError:
 					print(f"Node {self.node_id} could not connect to Node on port {port}")
 	def create_transaction(self, tx_id, tx_type, details):
-		organ_type, name, patient_id, blood_group, age, organ_life
-		n, omega, roots = setup1(details["organ_type"], details["name"], details["patient_id"], details["blood_group"], details["age"], details["organ_life"])
-		a, b, c, pi, ql, qr, qm, qc, qo = witnessGatesMain(n, details["organ_type"], details["name"], details["patient_id"], details["blood_group"], details["age"], details["organ_life"])
+		organ_type = int(hashlib.md5(details["organ_type"].encode()).hexdigest(), 16)
+		name = int(hashlib.md5(details["name"].encode()).hexdigest(), 16)
+		patient_id = int(hashlib.md5(details["patient_id"].encode()).hexdigest(), 16)
+		blood_group = int(hashlib.md5(details["blood_group"].encode()).hexdigest(), 16)
+		age = int(hashlib.md5(details["age"].encode()).hexdigest(), 16)
+		organ_life = int(hashlib.md5(details["organ_life"].encode()).hexdigest(), 16)
+		n, omega, roots = setup1(organ_type, name, patient_id, blood_group, age, organ_life)
+		a, b, c, pi, ql, qr, qm, qc, qo = witnessGatesMain(n, organ_type, name, patient_id, blood_group, age, organ_life)
 		sigmaFor1 = sigmaFinder(n)
 		c1_roots, c2_roots, c3_roots, sigma1, sigma2, sigma3, k1, k2 = permutations(n, roots, sigmaFor1, a, b, c)
 		QL, QR, QM, QC, QO, PI = gatePolynomials(roots, ql, qr, qm, qc, qo, pi)
@@ -505,7 +511,7 @@ def prove(n, roots, a, b, c, Zh, QL, QR, QM, QC, QO, PI, S1, S2, S3, I1, I2, I3,
 	
 	acc_eval = [Fp(1)]
 	for i in range(0, n):
-	    acc_eval.append(acc_eval[-1] * (_F(roots[i]) / _G(roots[i])))
+		acc_eval.append(acc_eval[-1] * (_F(roots[i]) / _G(roots[i])))
 	assert acc_eval.pop() == Fp(1)
 	ACC = galois.lagrange_poly(roots, Fp(acc_eval))
 	print("\n\n--- Accumulator Polynomial ---")
@@ -887,20 +893,6 @@ def verify(proof):
 
 
 #working
-'''n, omega, roots = setup1(2, 3)
-a, b, c, pi, ql, qr, qm, qc, qo = witnessGatesMain(n)
-sigmaFor1 = sigmaFinder(n)
-c1_roots, c2_roots, c3_roots, sigma1, sigma2, sigma3, k1, k2 = permutations(n, roots, sigmaFor1, a, b, c)
-QL, QR, QM, QC, QO, PI = gatePolynomials(roots, ql, qr, qm, qc, qo, pi)
-Zh, S1, S2, S3, I1, I2, I3 = permutationPolynomial(roots, sigma1, sigma2, sigma3, k1, k2)
-proof = prove(n, roots, a, b, c, Zh, QL, QR, QM, QC, QO, PI, S1, S2, S3, I1, I2, I3, k1, k2)
-print("\n\n\n\n")
-with open("proof.json", "r") as f:
-	pr = json.load(f)
-checkProof = load_proof(pr)
-verify(checkProof)'''
-
-
 print("Welcome to Organ transplantation system simulation")
 nodes = create_nodes(3, tau, 7000)
 #nodes[0].create_transaction("TX1001", "add_patient", {"patient_id": 123})
@@ -910,23 +902,20 @@ time.sleep(3)
 c = "1"
 while (c!="0"):
 	print("Enter details for organ entry")
-	organ_type = int(input("Enter organ type:"))
-	name = int(input("Enter patient name:"))
-	patient_id = int(input("Enter patient id:"))
-	blood_group = int(input("Enter blood group:"))
-	age = int(input("Enter patient age:"))
-	organ_life = int(input("Enter organ life:"))
+	organ_type = input("Enter organ type: ")
+	name = input("Enter patient name: ")
+	patient_id = input("Enter patient id: ")
+	blood_group = input("Enter blood group: ")
+	age = input("Enter patient age: ")
+	organ_life = input("Enter organ life: ")
 	nodes[0].create_transaction("TX100"+str(len(nodes[0].ledger)+1), "add_patient", {"organ_type":organ_type, "name":name, "patient_id": patient_id, "blood_group":blood_group, "age":age, "organ_life":organ_life})
 	time.sleep(2)
 	print("Enter 0 to exit")
 	c = input()
 
-print("Prover ledger: ",nodes[0].ledger)
-print("Verifier ledger: ",nodes[1].ledger)
-
-'''for node in nodes[1:]:
-	transaction = ledger[-1]
-	if node.verify_transaction(transaction):
-		print(f"Node {node.node_id} verified the transaction {transaction['tx_id']} successfully.")
-	else:
-		print(f"Node {node.node_id} failed to verify the transaction {transaction['tx_id']}.")'''
+print("Prover ledger transactions: ")
+for i in range(len(nodes[0].ledger)):
+	print(f"[{i}]: ", nodes[0].ledger[i])
+print("\nVerifier ledger: ")
+for i in range(len(nodes[1].ledger)):
+	print(f"[{i}]: ", nodes[1].ledger[i])
