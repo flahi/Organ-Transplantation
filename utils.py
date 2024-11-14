@@ -34,7 +34,7 @@ __all__ = [
     "dump_circuit",
 ]
 
-GF241 = galois.GF(241)
+GF521 = galois.GF(521)
 
 class GPoint(tuple):
 
@@ -189,13 +189,13 @@ def dump_proof(proof, path):
         if isinstance(v, GPoint):  # Assuming GPoint is defined somewhere in your code
             proof[k] = str(v)
         elif isinstance(v, list):
-            # Convert each item in the list, keeping GF(241) elements as is
+            # Convert each item in the list, keeping GF(521) elements as is
             proof[k] = [
                 str(item) if isinstance(item, GPoint) else item for item in v
             ]
         else:
-            # Check for GF(241) type
-            if isinstance(v, GF241):  # Check against the specific Galois Field instance
+            # Check for GF(521) type
+            if isinstance(v, GF521):  # Check against the specific Galois Field instance
                 proof[k] = v  # Keep it as is
             else:
                 proof[k] = int(v)  # Convert other types to int
@@ -206,20 +206,20 @@ def dump_proof(proof, path):
     return proof
 
 def load_proof(proof):
-    # List of proof keys that should be converted to GF(241)
+    # List of proof keys that should be converted to GF(521)
     gf_keys = ["round1", "round2", "round3", "round4", "round5"]
     
     for k, v in proof.items():
         if isinstance(v, list):
             # Convert each item in the list back to Galois Field or other types as needed
             proof[k] = [
-                galois.GF(241)(int(item)) if k in gf_keys and isinstance(item, (int, str)) else item
+                galois.GF(521)(int(item)) if k in gf_keys and isinstance(item, (int, str)) else item
                 for item in v
             ]
         else:
-            # Convert back if the value was an int or str and should be GF(241)
+            # Convert back if the value was an int or str and should be GF(521)
             if isinstance(v, (int, str)) and k in gf_keys:
-                proof[k] = galois.GF(241)(int(v))  # Convert str to int, then to GF element
+                proof[k] = galois.GF(521)(int(v))  # Convert str to int, then to GF element
     
     return proof
 

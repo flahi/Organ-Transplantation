@@ -123,7 +123,7 @@ def json_serialize(transaction):
 
 def json_deserialize(serialized_transaction):
     """Convert serialized transaction integers back to Galois Field elements where applicable."""
-    Fp = galois.GF(241)  # Define the Galois Field for order 241
+    Fp = galois.GF(521)  # Define the Galois Field for order 521
     
     deserialized_transaction = {}
     
@@ -202,7 +202,7 @@ patch_galois(galois.Poly)
 
 encrypted = False
 
-p = 241 if not encrypted else curve_order
+p = 521 if not encrypted else curve_order
 
 Fp = galois.GF(p)
 
