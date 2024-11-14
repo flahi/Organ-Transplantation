@@ -24,7 +24,6 @@ class Node:
 		server_socket.bind(('localhost', self.port))
 		server_socket.listen()
 		print(f"Node {self.node_id} listening on port {self.port}")
-		
 		while True:
 			client_socket, _ = server_socket.accept()
 			threading.Thread(target=self.handle_transaction, args=(client_socket,), daemon=True).start()
@@ -43,7 +42,6 @@ class Node:
 				checker = False
 		else:
 			deserialized_transactions = json_deserialize_main(transaction)
-			print(deserialized_transactions["proof"])
 			if verify(deserialized_transactions["proof"]):
 				print(f"Node {self.node_id} verified aggregated transactions successfully.")
 				for t in deserialized_transactions["transactions"]:
@@ -51,7 +49,6 @@ class Node:
 			else:
 				print(f"Node {self.node_id} failed to verify aggregated transactions.")
 				checker = False
-				
 	def broadcast_transaction(self, transaction):
 		transaction_data = json.dumps(transaction).encode()
 		
@@ -76,17 +73,9 @@ class Node:
 		QL, QR, QM, QC, QO, PI = gatePolynomials(roots, ql, qr, qm, qc, qo, pi)
 		Zh, S1, S2, S3, I1, I2, I3 = permutationPolynomial(roots, sigma1, sigma2, sigma3, k1, k2, c1_roots, c2_roots, c3_roots)
 		
-		# Generate the proof
+		print("Proof generation")
 		proof = prove(n, roots, a, b, c, Zh, QL, QR, QM, QC, QO, PI, S1, S2, S3, I1, I2, I3, k1, k2, omega)
-		num_proofs = 5
-		proofs = []
 		
-		for i in range(num_proofs):
-			proofs.append(proof)
-		
-		aggregated_proof = aggregate_proofs(proofs)
-		
-		# Add transaction with proof to ledger
 		transaction = {
 			"tx_id": tx_id,
 			"tx_type": tx_type,
@@ -99,13 +88,15 @@ class Node:
 		serialized_transaction = json_serialize(copy.deepcopy(transaction))
 		print(f"Node {self.node_id} created transaction {tx_id} and broadcasting...")
 		self.broadcast_transaction(serialized_transaction)
-		time.sleep(5)
+		time.sleep(2)
 		if (checker):
 			self.ledger.append(serialized_transaction)
 	def create_agg_transactions(self, n):
 		transactions = []
 		proofs = []
 		for i in range(n):
+			tx_id = "TX100"+str(len(self.ledger)+1+i)
+			print(f"Transaction: {tx_id}")
 			organ_type, name, patient_id, blood_group, age, organ_life = getDetails()
 			details = {"organ_type":organ_type, "name":name, "patient_id": patient_id, "blood_group":blood_group, "age":age, "organ_life":organ_life}
 			organ_type = hash(organ_type)
@@ -121,10 +112,11 @@ class Node:
 			QL, QR, QM, QC, QO, PI = gatePolynomials(roots, ql, qr, qm, qc, qo, pi)
 			Zh, S1, S2, S3, I1, I2, I3 = permutationPolynomial(roots, sigma1, sigma2, sigma3, k1, k2, c1_roots, c2_roots, c3_roots)
 			
+			print("Proof generation")
 			proof = prove(n, roots, a, b, c, Zh, QL, QR, QM, QC, QO, PI, S1, S2, S3, I1, I2, I3, k1, k2, omega)
 			
 			transaction = {
-				"tx_id": "TX100"+str(len(self.ledger)+1+i),
+				"tx_id": tx_id,
 				"tx_type": "add_organ",
 				"details": details,
 				"proof": proof,
@@ -140,7 +132,7 @@ class Node:
 		serialized_transaction = json_serialize_main(copy.deepcopy(transaction_main))
 		print(f"Node {self.node_id} created aggregated transactions and broadcasting...")
 		self.broadcast_transaction(serialized_transaction)
-		time.sleep(5)
+		time.sleep(2)
 		if (checker):
 			for t in serialized_transaction["transactions"]:
 				self.ledger.append(json_serialize(t))
@@ -148,6 +140,7 @@ class Node:
 		proof = transaction['proof']
 		return verify(proof)
 
+#initialize required nodes
 def create_nodes(num_nodes, crs, base_port=5000):
 	nodes = []
 	ports = [base_port + i for i in range(num_nodes)]
@@ -157,6 +150,42 @@ def create_nodes(num_nodes, crs, base_port=5000):
 		nodes.append(node)
 	return nodes
 
+#proof aggregation
+def aggregate_proofs(proofs):
+	print("\nProof aggregation\n---------------")
+	r1, r2, r3, r4, r5 = 0, 0, 0, 0, 0
+	for i in range(len(proofs)):
+		cr1, cr2, cr3, cr4, cr5 = 0, 0, 0, 0, 0
+		for j in range(len(proofs[i]["round1"])):
+			cr1 += int(proofs[i]["round1"][j]*(3**j))
+		for j in range(len(proofs[i]["round2"])):
+			cr2 += int(proofs[i]["round2"][j]*(3**j))
+		for j in range(len(proofs[i]["round3"])):
+			cr3 += int(proofs[i]["round3"][j]*(3**j))
+		for j in range(len(proofs[i]["round4"])):
+			cr4 += int(proofs[i]["round4"][j]*(3**j))
+		for j in range(len(proofs[i]["round5"])):
+			cr5 += int(proofs[i]["round5"][j]*(3**j))
+		r1 += cr1*(2**i)
+		r2 += cr2*(2**i)
+		r3 += cr3*(2**i)
+		r4 += cr4*(2**i)
+		r5 += cr5*(2**i)
+	val = str(r1+(r2*2)+(r3*3)+(r4*4)+(r5*5))
+	allHash = int(hashlib.md5(val.encode()).hexdigest(), 16)
+	n, omega, roots = setup1(r1, r2, r3, r4, r5, allHash)
+	a, b, c, pi, ql, qr, qm, qc, qo = witnessGatesMain(n, r1, r2, r3, r4, r5, allHash)
+	sigmaFor1 = sigmaFinder(n)
+	c1_roots, c2_roots, c3_roots, sigma1, sigma2, sigma3, k1, k2 = permutations(n, roots, sigmaFor1, a, b, c)
+	QL, QR, QM, QC, QO, PI = gatePolynomials(roots, ql, qr, qm, qc, qo, pi)
+	Zh, S1, S2, S3, I1, I2, I3 = permutationPolynomial(roots, sigma1, sigma2, sigma3, k1, k2, c1_roots, c2_roots, c3_roots)
+	
+	# Generate the proof
+	proof = prove(n, roots, a, b, c, Zh, QL, QR, QM, QC, QO, PI, S1, S2, S3, I1, I2, I3, k1, k2, omega)
+	
+	return proof
+
+#arbitriary functions
 def json_serialize(transaction):
     """Convert a transaction to a JSON-serializable format with Galois Field elements as integers."""
     serialized_transaction = {}
@@ -262,40 +291,6 @@ def json_deserialize_main(serialized_main_transaction):
     
     return deserialized_main_transaction
 
-def aggregate_proofs(proofs):
-	print("\nProof aggregation\n---------------")
-	r1, r2, r3, r4, r5 = 0, 0, 0, 0, 0
-	for i in range(len(proofs)):
-		cr1, cr2, cr3, cr4, cr5 = 0, 0, 0, 0, 0
-		for j in range(len(proofs[i]["round1"])):
-			cr1 += int(proofs[i]["round1"][j]*(3**j))
-		for j in range(len(proofs[i]["round2"])):
-			cr2 += int(proofs[i]["round2"][j]*(3**j))
-		for j in range(len(proofs[i]["round3"])):
-			cr3 += int(proofs[i]["round3"][j]*(3**j))
-		for j in range(len(proofs[i]["round4"])):
-			cr4 += int(proofs[i]["round4"][j]*(3**j))
-		for j in range(len(proofs[i]["round5"])):
-			cr5 += int(proofs[i]["round5"][j]*(3**j))
-		r1 += cr1*(2**i)
-		r2 += cr2*(2**i)
-		r3 += cr3*(2**i)
-		r4 += cr4*(2**i)
-		r5 += cr5*(2**i)
-	val = str(r1+(r2*2)+(r3*3)+(r4*4)+(r5*5))
-	allHash = int(hashlib.md5(val.encode()).hexdigest(), 16)
-	n, omega, roots = setup1(r1, r2, r3, r4, r5, allHash)
-	a, b, c, pi, ql, qr, qm, qc, qo = witnessGatesMain(n, r1, r2, r3, r4, r5, allHash)
-	sigmaFor1 = sigmaFinder(n)
-	c1_roots, c2_roots, c3_roots, sigma1, sigma2, sigma3, k1, k2 = permutations(n, roots, sigmaFor1, a, b, c)
-	QL, QR, QM, QC, QO, PI = gatePolynomials(roots, ql, qr, qm, qc, qo, pi)
-	Zh, S1, S2, S3, I1, I2, I3 = permutationPolynomial(roots, sigma1, sigma2, sigma3, k1, k2, c1_roots, c2_roots, c3_roots)
-	
-	# Generate the proof
-	proof = prove(n, roots, a, b, c, Zh, QL, QR, QM, QC, QO, PI, S1, S2, S3, I1, I2, I3, k1, k2, omega)
-	
-	return proof
-
 def getDetails():
 	print("Enter details for organ entry")
 	organ_type = input("Enter organ type: ")
@@ -307,16 +302,6 @@ def getDetails():
 	return organ_type, name, patient_id, blood_group, age, organ_life
 
 #setup
-G1 = generator1()
-G2 = generator2()
-patch_galois(galois.Poly)
-
-encrypted = False
-
-p = 521 if not encrypted else curve_order
-
-Fp = galois.GF(p)
-
 def setup1(organ_type, name, patient_id, blood_group, age, organ_life):
 	
 	# We have 7 gates, next power of 2 is 8
@@ -335,8 +320,6 @@ def setup1(organ_type, name, patient_id, blood_group, age, organ_life):
 #witness and gates
 def pad_array(a, n):
     return a + [0] * (n - len(a))
-
-checker = True
 
 def witnessGates1(organ_type, name, patient_id, blood_group, age, organ_life):
 	#witness vectors
@@ -509,7 +492,6 @@ def gatePolynomials(roots, ql, qr, qm, qc, qo, pi):
 	
 	return QL, QR, QM, QC, QO, PI
 
-
 #permutation polynomial
 def to_vanishing_poly(roots, field):
     # Z^n - 1 = (Z - 1)(Z - w)(Z - w^2)...(Z - w^(n-1))
@@ -561,10 +543,8 @@ def crsConstruct():
 	print(tau)
 	return tau
 
-tau = crsConstruct()
-
 #prover
-def shift_poly(poly: galois.Poly, omega: Fp):
+def shift_poly(poly: galois.Poly, omega):
     coeffs = poly.coeffs[::-1]
     coeffs = [c * omega**i for i, c in enumerate(coeffs)]
     return galois.Poly(coeffs[::-1], field=poly.field)
@@ -828,7 +808,6 @@ def prove(n, roots, a, b, c, Zh, QL, QR, QM, QC, QO, PI, S1, S2, S3, I1, I2, I3,
 
 #verifier
 def verify(proof):
-	# These evaluations are calculated beforehand during the setup phase
 	circuits = load_circuit("circuit.json")
 	circuit_config = circuits["add_patient"]
 	
@@ -1001,29 +980,44 @@ def verify(proof):
 		return (e1 * tau == e2)
 
 
+#initialization
+G1 = generator1()
+G2 = generator2()
+patch_galois(galois.Poly)
 
+encrypted = False
+
+p = 521 if not encrypted else curve_order
+Fp = galois.GF(p)
+
+checker = True
+
+tau = crsConstruct()
 
 #working
-print("Welcome to Organ transplantation system simulation")
+print("\nWelcome to Organ transplantation system simulation")
 nodes = create_nodes(3, tau, 7000)
-#nodes[0].create_transaction("TX1001", "add_patient", {"patient_id": 123})
 
 time.sleep(3)
 
 c = "1"
 while (c!="0"):
-	print("(1) Normal transaction\n(2) Aggregated transaction")
-	ch = input("-> ")
-	if ch=="1":
+	print("(1) Normal transaction\n(2) Aggregated transaction\n(0) Exit")
+	c = input("-> ")
+	if c=="1":
 		organ_type, name, patient_id, blood_group, age, organ_life = getDetails()
 		nodes[0].create_transaction("TX100"+str(len(nodes[0].ledger)+1), "add_organ", {"organ_type":organ_type, "name":name, "patient_id": patient_id, "blood_group":blood_group, "age":age, "organ_life":organ_life})
 		time.sleep(2)
-	else:
+	elif c=="2":
 		n = int(input("Enter number of transactions: "))
 		nodes[0].create_agg_transactions(n)
-	print("Enter 0 to exit")
-	c = input("-> ")
+		time.sleep(2)
+	elif c=="0":
+		break
+	else:
+		print("Invalid input")
 
+#print ledgers
 print("Prover ledger transactions: ")
 for i in range(len(nodes[0].ledger)):
 	print(f"[{i}]: ", nodes[0].ledger[i])
