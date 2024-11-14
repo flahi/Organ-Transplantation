@@ -7,7 +7,7 @@ import time
 import copy
 from datetime import datetime
 import hashlib
-from utils import (generator1, generator2, curve_order, normalize, validate_point, GPoint, SRS, numbers_to_hash, generate_challenge, patch_galois, dump_proof, load_proof, dump_circuit, load_circuit)
+from utils import (generator1, generator2, curve_order, normalize, validate_point, GPoint, SRS, numbers_to_hash, patch_galois, dump_proof, load_proof, dump_circuit, load_circuit)
 
 
 #node simulation
@@ -33,14 +33,25 @@ class Node:
 		transaction = json.loads(transaction_data)
 		client_socket.close()
 		global checker
-		deserialized_transaction = json_deserialize(transaction)
-		
-		if self.verify_transaction(deserialized_transaction):
-			print(f"Node {self.node_id} verified transaction {transaction['tx_id']} successfully.")
-			self.ledger.append(transaction)
+		if transaction.get("transactions", None)==None:
+			deserialized_transaction = json_deserialize(transaction)
+			if self.verify_transaction(deserialized_transaction):
+				print(f"Node {self.node_id} verified transaction {transaction['tx_id']} successfully.")
+				self.ledger.append(transaction)
+			else:
+				print(f"Node {self.node_id} failed to verify transaction {transaction['tx_id']}.")
+				checker = False
 		else:
-			print(f"Node {self.node_id} failed to verify transaction {transaction['tx_id']}.")
-			checker = False
+			deserialized_transactions = json_deserialize_main(transaction)
+			print(deserialized_transactions["proof"])
+			if verify(deserialized_transactions["proof"]):
+				print(f"Node {self.node_id} verified aggregated transactions successfully.")
+				for t in deserialized_transactions["transactions"]:
+					self.ledger.append(json_serialize(t))
+			else:
+				print(f"Node {self.node_id} failed to verify aggregated transactions.")
+				checker = False
+				
 	def broadcast_transaction(self, transaction):
 		transaction_data = json.dumps(transaction).encode()
 		
@@ -52,12 +63,12 @@ class Node:
 				except ConnectionRefusedError:
 					print(f"Node {self.node_id} could not connect to Node on port {port}")
 	def create_transaction(self, tx_id, tx_type, details):
-		organ_type = int(hashlib.md5(details["organ_type"].encode()).hexdigest(), 16)
-		name = int(hashlib.md5(details["name"].encode()).hexdigest(), 16)
-		patient_id = int(hashlib.md5(details["patient_id"].encode()).hexdigest(), 16)
-		blood_group = int(hashlib.md5(details["blood_group"].encode()).hexdigest(), 16)
-		age = int(hashlib.md5(details["age"].encode()).hexdigest(), 16)
-		organ_life = int(hashlib.md5(details["organ_life"].encode()).hexdigest(), 16)
+		organ_type = hash(details["organ_type"])
+		name = hash(details["name"])
+		patient_id = hash(details["patient_id"])
+		blood_group = hash(details["blood_group"])
+		age = hash(details["age"])
+		organ_life = hash(details["organ_life"])
 		n, omega, roots = setup1(organ_type, name, patient_id, blood_group, age, organ_life)
 		a, b, c, pi, ql, qr, qm, qc, qo = witnessGatesMain(n, organ_type, name, patient_id, blood_group, age, organ_life)
 		sigmaFor1 = sigmaFinder(n)
@@ -67,6 +78,14 @@ class Node:
 		
 		# Generate the proof
 		proof = prove(n, roots, a, b, c, Zh, QL, QR, QM, QC, QO, PI, S1, S2, S3, I1, I2, I3, k1, k2, omega)
+		num_proofs = 5
+		proofs = []
+		
+		for i in range(num_proofs):
+			proofs.append(proof)
+		
+		aggregated_proof = aggregate_proofs(proofs)
+		
 		# Add transaction with proof to ledger
 		transaction = {
 			"tx_id": tx_id,
@@ -83,6 +102,48 @@ class Node:
 		time.sleep(5)
 		if (checker):
 			self.ledger.append(serialized_transaction)
+	def create_agg_transactions(self, n):
+		transactions = []
+		proofs = []
+		for i in range(n):
+			organ_type, name, patient_id, blood_group, age, organ_life = getDetails()
+			details = {"organ_type":organ_type, "name":name, "patient_id": patient_id, "blood_group":blood_group, "age":age, "organ_life":organ_life}
+			organ_type = hash(organ_type)
+			name = hash(name)
+			patient_id = hash(patient_id)
+			blood_group = hash(blood_group)
+			age = hash(age)
+			organ_life = hash(organ_life)
+			n, omega, roots = setup1(organ_type, name, patient_id, blood_group, age, organ_life)
+			a, b, c, pi, ql, qr, qm, qc, qo = witnessGatesMain(n, organ_type, name, patient_id, blood_group, age, organ_life)
+			sigmaFor1 = sigmaFinder(n)
+			c1_roots, c2_roots, c3_roots, sigma1, sigma2, sigma3, k1, k2 = permutations(n, roots, sigmaFor1, a, b, c)
+			QL, QR, QM, QC, QO, PI = gatePolynomials(roots, ql, qr, qm, qc, qo, pi)
+			Zh, S1, S2, S3, I1, I2, I3 = permutationPolynomial(roots, sigma1, sigma2, sigma3, k1, k2, c1_roots, c2_roots, c3_roots)
+			
+			proof = prove(n, roots, a, b, c, Zh, QL, QR, QM, QC, QO, PI, S1, S2, S3, I1, I2, I3, k1, k2, omega)
+			
+			transaction = {
+				"tx_id": "TX100"+str(len(self.ledger)+1+i),
+				"tx_type": "add_organ",
+				"details": details,
+				"proof": proof,
+				"timestamp": datetime.utcnow().isoformat()
+			}
+			transactions.append(transaction)
+		for i in range(len(transactions)):
+			proofs.append(transactions[i]["proof"])
+		aggregated_proof = aggregate_proofs(proofs)
+		global checker
+		checker = True
+		transaction_main = {"transactions": transactions, "proof": aggregated_proof}
+		serialized_transaction = json_serialize_main(copy.deepcopy(transaction_main))
+		print(f"Node {self.node_id} created aggregated transactions and broadcasting...")
+		self.broadcast_transaction(serialized_transaction)
+		time.sleep(5)
+		if (checker):
+			for t in serialized_transaction["transactions"]:
+				self.ledger.append(json_serialize(t))
 	def verify_transaction(self, transaction):
 		proof = transaction['proof']
 		return verify(proof)
@@ -148,52 +209,102 @@ def json_deserialize(serialized_transaction):
             
     return deserialized_transaction
 
-def aggregate_commitments(proofs, field):
-    """Aggregate polynomial commitments from multiple proofs using weighted commitments."""
-    # Initialize accumulators for each round's commitments in the specified field
-    aggregated_round1 = [field(0), field(0), field(0)]  # For [A, B, C]
-    aggregated_round2 = field(0)                       # For [Z]
-    aggregated_round3 = [field(0), field(0), field(0)]  # For [Tl, Tm, Th]
-    aggregated_round4 = [field(0)] * 6                 # For [a_zeta, b_zeta, c_zeta, s1_zeta, s2_zeta, z_omega_zeta]
-    aggregated_round5 = [field(0), field(0)]           # For [Wzeta, Womega_zeta]
-    aggregated_pi = [field(0)] * len(proofs[0]["pi"])  # Initialize aggregated `pi`
+def json_serialize_main(main_transaction):
+    """Convert a main transaction to a JSON-serializable format with Galois Field elements as integers."""
+    serialized_main_transaction = {}
+    
+    # Serialize the "transactions" list
+    serialized_main_transaction["transactions"] = [
+        json_serialize(transaction)  # Using the existing json_serialize function for each transaction
+        for transaction in main_transaction["transactions"]
+    ]
+    
+    # Serialize the "proof"
+    serialized_proof = {}
+    proof = main_transaction["proof"]
+    for key, value in proof.items():
+        if isinstance(value, list):  # Convert each Galois field element in the list to integer
+            serialized_proof[key] = [
+                int(item) if isinstance(item, galois.FieldArray) else item
+                for item in value
+            ]
+        else:
+            serialized_proof[key] = value
+            
+    serialized_main_transaction["proof"] = serialized_proof
+    
+    return serialized_main_transaction
 
-    # Loop through each proof and aggregate each round's values
-    for proof in proofs:
-        chi_i = generate_challenge(proof, field)  # Unique challenge for this proof
-        
-        # Aggregate round1 (A, B, C)
-        for j in range(3):  # A, B, C components in round1
-            aggregated_round1[j] += proof["round1"][j] * chi_i
+def json_deserialize_main(serialized_main_transaction):
+    """Convert serialized main transaction integers back to Galois Field elements where applicable."""
+    Fp = galois.GF(521)  # Define the Galois Field for order 521
+    
+    deserialized_main_transaction = {}
+    
+    # Deserialize the "transactions" list
+    deserialized_main_transaction["transactions"] = [
+        json_deserialize(transaction)  # Using the existing json_deserialize function for each transaction
+        for transaction in serialized_main_transaction["transactions"]
+    ]
+    
+    # Deserialize the "proof"
+    deserialized_proof = {}
+    proof = serialized_main_transaction["proof"]
+    for key, value in proof.items():
+        if key == "pi":  # Keep 'pi' as a list of integers
+            deserialized_proof[key] = [int(item) for item in value]
+        elif key in ["round1", "round2", "round3", "round4", "round5"]:  # Convert to Galois Field elements
+            deserialized_proof[key] = [Fp(item) for item in value]
+        else:  # Keep other proof elements as they are
+            deserialized_proof[key] = value
+            
+    deserialized_main_transaction["proof"] = deserialized_proof
+    
+    return deserialized_main_transaction
 
-        # Aggregate round2 (Z)
-        aggregated_round2 += proof["round2"][0] * chi_i
+def aggregate_proofs(proofs):
+	print("\nProof aggregation\n---------------")
+	r1, r2, r3, r4, r5 = 0, 0, 0, 0, 0
+	for i in range(len(proofs)):
+		cr1, cr2, cr3, cr4, cr5 = 0, 0, 0, 0, 0
+		for j in range(len(proofs[i]["round1"])):
+			cr1 += int(proofs[i]["round1"][j]*(3**j))
+		for j in range(len(proofs[i]["round2"])):
+			cr2 += int(proofs[i]["round2"][j]*(3**j))
+		for j in range(len(proofs[i]["round3"])):
+			cr3 += int(proofs[i]["round3"][j]*(3**j))
+		for j in range(len(proofs[i]["round4"])):
+			cr4 += int(proofs[i]["round4"][j]*(3**j))
+		for j in range(len(proofs[i]["round5"])):
+			cr5 += int(proofs[i]["round5"][j]*(3**j))
+		r1 += cr1*(2**i)
+		r2 += cr2*(2**i)
+		r3 += cr3*(2**i)
+		r4 += cr4*(2**i)
+		r5 += cr5*(2**i)
+	val = str(r1+(r2*2)+(r3*3)+(r4*4)+(r5*5))
+	allHash = int(hashlib.md5(val.encode()).hexdigest(), 16)
+	n, omega, roots = setup1(r1, r2, r3, r4, r5, allHash)
+	a, b, c, pi, ql, qr, qm, qc, qo = witnessGatesMain(n, r1, r2, r3, r4, r5, allHash)
+	sigmaFor1 = sigmaFinder(n)
+	c1_roots, c2_roots, c3_roots, sigma1, sigma2, sigma3, k1, k2 = permutations(n, roots, sigmaFor1, a, b, c)
+	QL, QR, QM, QC, QO, PI = gatePolynomials(roots, ql, qr, qm, qc, qo, pi)
+	Zh, S1, S2, S3, I1, I2, I3 = permutationPolynomial(roots, sigma1, sigma2, sigma3, k1, k2, c1_roots, c2_roots, c3_roots)
+	
+	# Generate the proof
+	proof = prove(n, roots, a, b, c, Zh, QL, QR, QM, QC, QO, PI, S1, S2, S3, I1, I2, I3, k1, k2, omega)
+	
+	return proof
 
-        # Aggregate round3 (Tl, Tm, Th)
-        for j in range(3):  # Tl, Tm, Th components in round3
-            aggregated_round3[j] += proof["round3"][j] * chi_i
-
-        # Aggregate round4 (a_zeta, b_zeta, c_zeta, s1_zeta, s2_zeta, z_omega_zeta)
-        for j in range(6):  # Each element in round4
-            aggregated_round4[j] += proof["round4"][j] * chi_i
-
-        # Aggregate round5 (Wzeta, Womega_zeta)
-        for j in range(2):  # Wzeta and Womega_zeta in round5
-            aggregated_round5[j] += proof["round5"][j] * chi_i
-
-        # Aggregate unique `pi` values
-        for j, pi_value in enumerate(proof["pi"]):
-            aggregated_pi[j] += pi_value * chi_i
-
-    # Return the aggregated commitments, including `pi`
-    return {
-        "round1": aggregated_round1,
-        "round2": [aggregated_round2],
-        "round3": aggregated_round3,
-        "round4": aggregated_round4,
-        "round5": aggregated_round5,
-        "pi": aggregated_pi
-    }
+def getDetails():
+	print("Enter details for organ entry")
+	organ_type = input("Enter organ type: ")
+	name = input("Enter patient name: ")
+	patient_id = input("Enter patient id: ")
+	blood_group = input("Enter blood group: ")
+	age = input("Enter patient age: ")
+	organ_life = input("Enter organ life: ")
+	return organ_type, name, patient_id, blood_group, age, organ_life
 
 #setup
 G1 = generator1()
@@ -901,17 +1012,17 @@ time.sleep(3)
 
 c = "1"
 while (c!="0"):
-	print("Enter details for organ entry")
-	organ_type = input("Enter organ type: ")
-	name = input("Enter patient name: ")
-	patient_id = input("Enter patient id: ")
-	blood_group = input("Enter blood group: ")
-	age = input("Enter patient age: ")
-	organ_life = input("Enter organ life: ")
-	nodes[0].create_transaction("TX100"+str(len(nodes[0].ledger)+1), "add_patient", {"organ_type":organ_type, "name":name, "patient_id": patient_id, "blood_group":blood_group, "age":age, "organ_life":organ_life})
-	time.sleep(2)
+	print("(1) Normal transaction\n(2) Aggregated transaction")
+	ch = input("-> ")
+	if ch=="1":
+		organ_type, name, patient_id, blood_group, age, organ_life = getDetails()
+		nodes[0].create_transaction("TX100"+str(len(nodes[0].ledger)+1), "add_organ", {"organ_type":organ_type, "name":name, "patient_id": patient_id, "blood_group":blood_group, "age":age, "organ_life":organ_life})
+		time.sleep(2)
+	else:
+		n = int(input("Enter number of transactions: "))
+		nodes[0].create_agg_transactions(n)
 	print("Enter 0 to exit")
-	c = input()
+	c = input("-> ")
 
 print("Prover ledger transactions: ")
 for i in range(len(nodes[0].ledger)):
