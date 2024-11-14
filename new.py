@@ -6,7 +6,7 @@ import json
 import time
 import copy
 from datetime import datetime
-from utils import (generator1, generator2, curve_order, normalize, validate_point, GPoint, SRS, numbers_to_hash, patch_galois, dump_proof, load_proof, dump_circuit, load_circuit)
+from utils import (generator1, generator2, curve_order, normalize, validate_point, GPoint, SRS, numbers_to_hash, generate_challenge, patch_galois, dump_proof, load_proof, dump_circuit, load_circuit)
 
 
 #node simulation
@@ -31,7 +31,7 @@ class Node:
 		transaction_data = client_socket.recv(4096).decode()
 		transaction = json.loads(transaction_data)
 		client_socket.close()
-		
+		global checker
 		deserialized_transaction = json_deserialize(transaction)
 		
 		if self.verify_transaction(deserialized_transaction):
@@ -39,6 +39,7 @@ class Node:
 			self.ledger.append(transaction)
 		else:
 			print(f"Node {self.node_id} failed to verify transaction {transaction['tx_id']}.")
+			checker = False
 	def broadcast_transaction(self, transaction):
 		transaction_data = json.dumps(transaction).encode()
 		
@@ -50,8 +51,9 @@ class Node:
 				except ConnectionRefusedError:
 					print(f"Node {self.node_id} could not connect to Node on port {port}")
 	def create_transaction(self, tx_id, tx_type, details):
-		n, omega, roots = setup1(2, 3)
-		a, b, c, pi, ql, qr, qm, qc, qo = witnessGatesMain(n)
+		organ_type, name, patient_id, blood_group, age, organ_life
+		n, omega, roots = setup1(details["organ_type"], details["name"], details["patient_id"], details["blood_group"], details["age"], details["organ_life"])
+		a, b, c, pi, ql, qr, qm, qc, qo = witnessGatesMain(n, details["organ_type"], details["name"], details["patient_id"], details["blood_group"], details["age"], details["organ_life"])
 		sigmaFor1 = sigmaFinder(n)
 		c1_roots, c2_roots, c3_roots, sigma1, sigma2, sigma3, k1, k2 = permutations(n, roots, sigmaFor1, a, b, c)
 		QL, QR, QM, QC, QO, PI = gatePolynomials(roots, ql, qr, qm, qc, qo, pi)
@@ -67,10 +69,14 @@ class Node:
 			"proof": proof,
 			"timestamp": datetime.utcnow().isoformat()
 		}
+		global checker
+		checker = True
 		serialized_transaction = json_serialize(copy.deepcopy(transaction))
 		print(f"Node {self.node_id} created transaction {tx_id} and broadcasting...")
 		self.broadcast_transaction(serialized_transaction)
-		self.ledger.append(serialized_transaction)
+		time.sleep(5)
+		if (checker):
+			self.ledger.append(serialized_transaction)
 	def verify_transaction(self, transaction):
 		proof = transaction['proof']
 		return verify(proof)
@@ -136,6 +142,53 @@ def json_deserialize(serialized_transaction):
             
     return deserialized_transaction
 
+def aggregate_commitments(proofs, field):
+    """Aggregate polynomial commitments from multiple proofs using weighted commitments."""
+    # Initialize accumulators for each round's commitments in the specified field
+    aggregated_round1 = [field(0), field(0), field(0)]  # For [A, B, C]
+    aggregated_round2 = field(0)                       # For [Z]
+    aggregated_round3 = [field(0), field(0), field(0)]  # For [Tl, Tm, Th]
+    aggregated_round4 = [field(0)] * 6                 # For [a_zeta, b_zeta, c_zeta, s1_zeta, s2_zeta, z_omega_zeta]
+    aggregated_round5 = [field(0), field(0)]           # For [Wzeta, Womega_zeta]
+    aggregated_pi = [field(0)] * len(proofs[0]["pi"])  # Initialize aggregated `pi`
+
+    # Loop through each proof and aggregate each round's values
+    for proof in proofs:
+        chi_i = generate_challenge(proof, field)  # Unique challenge for this proof
+        
+        # Aggregate round1 (A, B, C)
+        for j in range(3):  # A, B, C components in round1
+            aggregated_round1[j] += proof["round1"][j] * chi_i
+
+        # Aggregate round2 (Z)
+        aggregated_round2 += proof["round2"][0] * chi_i
+
+        # Aggregate round3 (Tl, Tm, Th)
+        for j in range(3):  # Tl, Tm, Th components in round3
+            aggregated_round3[j] += proof["round3"][j] * chi_i
+
+        # Aggregate round4 (a_zeta, b_zeta, c_zeta, s1_zeta, s2_zeta, z_omega_zeta)
+        for j in range(6):  # Each element in round4
+            aggregated_round4[j] += proof["round4"][j] * chi_i
+
+        # Aggregate round5 (Wzeta, Womega_zeta)
+        for j in range(2):  # Wzeta and Womega_zeta in round5
+            aggregated_round5[j] += proof["round5"][j] * chi_i
+
+        # Aggregate unique `pi` values
+        for j, pi_value in enumerate(proof["pi"]):
+            aggregated_pi[j] += pi_value * chi_i
+
+    # Return the aggregated commitments, including `pi`
+    return {
+        "round1": aggregated_round1,
+        "round2": [aggregated_round2],
+        "round3": aggregated_round3,
+        "round4": aggregated_round4,
+        "round5": aggregated_round5,
+        "pi": aggregated_pi
+    }
+
 #setup
 G1 = generator1()
 G2 = generator2()
@@ -147,16 +200,13 @@ p = 241 if not encrypted else curve_order
 
 Fp = galois.GF(p)
 
-def setup1(x, y):
-	# 2x^2 - x^2y^2 + 3
-	out = 2 * x**2 - x**2 * y**2 + 3
-	print(f"out = {out}")
+def setup1(organ_type, name, patient_id, blood_group, age, organ_life):
 	
 	# We have 7 gates, next power of 2 is 8
-	n = 7
+	n = 5
 	n = 2 ** int(np.ceil(np.log2(n)))
 	assert n & n - 1 == 0, "n must be a power of 2"
-	
+	print(n)
 	# Find primitive root of unity
 	omega = Fp.primitive_root_of_unity(n)
 	assert omega ** (n) == 1, f"omega (ω) {omega} is not a root of unity"
@@ -169,24 +219,31 @@ def setup1(x, y):
 def pad_array(a, n):
     return a + [0] * (n - len(a))
 
-def witnessGates1():
+checker = True
+
+def witnessGates1(organ_type, name, patient_id, blood_group, age, organ_life):
 	#witness vectors
-	a = [2, 2, 3, 4, 4, 8, -28]
-	b = [2, 2, 3, 0, 9, 36, 3]
-	c = [4, 4, 9, 8, 36, -28, -25]
-	pi = [0, 0, 0, 0, 0, 0, 25]
+	c1 = organ_type + name
+	c2 = patient_id + blood_group
+	c3 = age + organ_life
+	c4 = c1 + c2
+	c5 = c3 + c4
+	a = [organ_type, patient_id, age, c1, c3]
+	b = [name, blood_group, organ_life, c2, c4]
+	c = [c1, c2, c3, c4, c5]
+	pi = [0, 0, 0, 0, -c5]
 
 	# gate vectors
-	ql = [0, 0, 0, 2, 0, 1, 1]
-	qr = [0, 0, 0, 0, 0, -1, 0]
-	qm = [1, 1, 1, 1, 1, 0, 0]
-	qc = [0, 0, 0, 0, 0, 0, 3]
-	qo = [-1, -1, -1, -1, -1, -1, 0]
+	ql = [1, 1, 1, 1, 1]
+	qm = [0, 0, 0, 0, 0]
+	qr = [1, 1, 1, 1, 1]
+	qc = [0, 0, 0, 0, 0]
+	qo = [-1, -1, -1, -1, 0]
 	
 	return a, b, c, pi, ql, qr, qm, qc, qo
 
-def witnessGatesMain(n):
-	a, b, c, pi, ql, qr, qm, qc, qo = witnessGates1()
+def witnessGatesMain(n, organ_type, name, patient_id, blood_group, age, organ_life):
+	a, b, c, pi, ql, qr, qm, qc, qo = witnessGates1(organ_type, name, patient_id, blood_group, age, organ_life)
 	# pad vectors to length n
 	a = pad_array(a, n)
 	b = pad_array(b, n)
@@ -276,24 +333,24 @@ def sigmaFinder(n):
 		ai[1]: ai[1],
 		ai[2]: ai[2],
 		ai[3]: ci[0],
-		ai[4]: ci[1],
-		ai[5]: ci[3],
-		ai[6]: ci[5],
+		ai[4]: ci[2],
+		ai[5]: ai[5],
+		ai[6]: ai[6],
 		ai[7]: ai[7],
 		bi[0]: bi[0],
 		bi[1]: bi[1],
 		bi[2]: bi[2],
-		bi[3]: bi[3],
-		bi[4]: ci[2],
-		bi[5]: ci[4],
+		bi[3]: ci[1],
+		bi[4]: ci[3],
+		bi[5]: bi[5],
 		bi[6]: bi[6],
 		bi[7]: bi[7],
 		ci[0]: ai[3],
-		ci[1]: ai[4],
-		ci[2]: bi[4],
-		ci[3]: ai[5],
-		ci[4]: bi[5],
-		ci[5]: ai[6],
+		ci[1]: bi[3],
+		ci[2]: ai[4],
+		ci[3]: bi[4],
+		ci[4]: ci[4],
+		ci[5]: ci[5],
 		ci[6]: ci[6],
 		ci[7]: ci[7],
 	}
@@ -843,10 +900,26 @@ with open("proof.json", "r") as f:
 checkProof = load_proof(pr)
 verify(checkProof)'''
 
-nodes = create_nodes(3, tau)
-nodes[0].create_transaction("TX1001", "add_patient", {"patient_id": 123})
 
-time.sleep(2)
+print("Welcome to Organ transplantation system simulation")
+nodes = create_nodes(3, tau, 7000)
+#nodes[0].create_transaction("TX1001", "add_patient", {"patient_id": 123})
+
+time.sleep(3)
+
+c = "1"
+while (c!="0"):
+	print("Enter details for organ entry")
+	organ_type = int(input("Enter organ type:"))
+	name = int(input("Enter patient name:"))
+	patient_id = int(input("Enter patient id:"))
+	blood_group = int(input("Enter blood group:"))
+	age = int(input("Enter patient age:"))
+	organ_life = int(input("Enter organ life:"))
+	nodes[0].create_transaction("TX100"+str(len(nodes[0].ledger)+1), "add_patient", {"organ_type":organ_type, "name":name, "patient_id": patient_id, "blood_group":blood_group, "age":age, "organ_life":organ_life})
+	time.sleep(2)
+	print("Enter 0 to exit")
+	c = input()
 
 print("Prover ledger: ",nodes[0].ledger)
 print("Verifier ledger: ",nodes[1].ledger)

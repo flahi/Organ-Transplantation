@@ -147,6 +147,26 @@ def numbers_to_hash(numbers, field) -> int:
     # Generate the challenge in the specified field
     return field(int(engine.hexdigest(), 16) % field.order)
 
+def generate_challenge(proof, field):
+    hasher = keccak.new(digest_bits=256)
+    
+    def hashable_repr(element):
+        if isinstance(element, list):
+            return [hashable_repr(e) for e in element]
+        elif isinstance(element, galois.FieldArray):
+            return int(element)
+        return str(element)
+    
+    # If `proof` is not a dictionary, raise an error with details
+    if not isinstance(proof, dict):
+        raise TypeError("Expected 'proof' to be a dictionary, got a list or other type.")
+
+    for key in ["round1", "round2", "round3", "round4", "round5"]:
+        processed_round = hashable_repr(proof[key])
+        hasher.update(bytes(str(processed_round), "utf-8"))
+
+    challenge_value = int(hasher.hexdigest(), 16)
+    return field(challenge_value % field.order)
 
 def patch_galois(Poly):
     def new_call(self, at, **kwargs):
